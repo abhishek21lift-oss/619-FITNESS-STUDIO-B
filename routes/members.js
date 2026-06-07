@@ -1,70 +1,110 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../db.js';
 
 const router = Router();
 
-const members = [
-  { id: '1', name: 'Arjun Singh', phone: '9876543210', email: 'arjun@email.com', gender: 'Male', age: 28, plan: 'Monthly Premium', planId: '1', status: 'Active', joinDate: '2025-12-01', endDate: '2026-01-01', fee: 1999, address: '12, MG Road, Lucknow', emergency: '9912345678', photo: '' },
-  { id: '2', name: 'Priya Sharma', phone: '9876543211', email: 'priya@email.com', gender: 'Female', age: 24, plan: 'Quarterly Pro', planId: '2', status: 'Active', joinDate: '2025-10-15', endDate: '2026-01-15', fee: 4999, address: '45, Hazratganj, Lucknow', emergency: '9912345679', photo: '' },
-  { id: '3', name: 'Rahul Verma', phone: '9876543212', email: 'rahul@email.com', gender: 'Male', age: 32, plan: 'Yearly Elite', planId: '3', status: 'Active', joinDate: '2025-06-01', endDate: '2026-06-01', fee: 14999, address: '78, Gomti Nagar, Lucknow', emergency: '9912345680', photo: '' },
-  { id: '4', name: 'Neha Kapoor', phone: '9876543213', email: 'neha@email.com', gender: 'Female', age: 26, plan: 'Monthly Premium', planId: '1', status: 'Inactive', joinDate: '2025-08-20', endDate: '2025-09-20', fee: 1999, address: '34, Aliganj, Lucknow', emergency: '9912345681', photo: '' },
-  { id: '5', name: 'Vikram Yadav', phone: '9876543214', email: 'vikram@email.com', gender: 'Male', age: 35, plan: 'Quarterly Pro', planId: '2', status: 'Active', joinDate: '2025-11-10', endDate: '2026-02-10', fee: 4999, address: '56, Indira Nagar, Lucknow', emergency: '9912345682', photo: '' },
-  { id: '6', name: 'Sneha Patel', phone: '9876543215', email: 'sneha@email.com', gender: 'Female', age: 22, plan: 'Monthly Basic', planId: '4', status: 'Active', joinDate: '2026-01-05', endDate: '2026-02-05', fee: 999, address: '89, Faizabad Road, Lucknow', emergency: '9912345683', photo: '' },
-  { id: '7', name: 'Amit Gupta', phone: '9876543216', email: 'amit@email.com', gender: 'Male', age: 30, plan: 'Yearly Elite', planId: '3', status: 'Active', joinDate: '2025-03-01', endDate: '2026-03-01', fee: 14999, address: '21, Jankipuram, Lucknow', emergency: '9912345684', photo: '' },
-  { id: '8', name: 'Kavita Joshi', phone: '9876543217', email: 'kavita@email.com', gender: 'Female', age: 27, plan: 'Monthly Premium', planId: '1', status: 'Pending', joinDate: '2026-01-20', endDate: '2026-02-20', fee: 1999, address: '67, Mahanagar, Lucknow', emergency: '9912345685', photo: '' },
-  { id: '9', name: 'Deepak Mishra', phone: '9876543218', email: 'deepak@email.com', gender: 'Male', age: 29, plan: 'Quarterly Pro', planId: '2', status: 'Active', joinDate: '2025-09-05', endDate: '2025-12-05', fee: 4999, address: '90, Vikas Nagar, Lucknow', emergency: '9912345686', photo: '' },
-  { id: '10', name: 'Anjali Tiwari', phone: '9876543219', email: 'anjali@email.com', gender: 'Female', age: 25, plan: 'Monthly Basic', planId: '4', status: 'Inactive', joinDate: '2025-07-12', endDate: '2025-08-12', fee: 999, address: '43, Rajajipuram, Lucknow', emergency: '9912345687', photo: '' },
-  { id: '11', name: 'Rohit Pandey', phone: '9876543220', email: 'rohit@email.com', gender: 'Male', age: 31, plan: 'Yearly Elite', planId: '3', status: 'Active', joinDate: '2025-01-15', endDate: '2026-01-15', fee: 14999, address: '15, Alambagh, Lucknow', emergency: '9912345688', photo: '' },
-  { id: '12', name: 'Pooja Chauhan', phone: '9876543221', email: 'pooja@email.com', gender: 'Female', age: 23, plan: 'Monthly Basic', planId: '4', status: 'Active', joinDate: '2026-02-01', endDate: '2026-03-01', fee: 999, address: '72, Sarojini Nagar, Lucknow', emergency: '9912345689', photo: '' },
-];
+const MEMBER_SELECT = `
+  id, member_code, gender, address, emergency_contact, emergency_phone,
+  join_date, status, date_of_birth, created_at,
+  profile:profile_id ( id, full_name, email, phone, avatar_url ),
+  subscriptions:member_subscriptions (
+    id, end_date, amount_paid, start_date, payment_status,
+    plan:plan_id ( id, name, price, duration_days )
+  )
+`;
 
-router.get('/', (_req, res) => {
-  res.json(members);
-});
-
-router.get('/:id', (req, res) => {
-  const member = members.find((m) => m.id === req.params.id);
-  if (!member) return res.status(404).json({ error: 'Member not found' });
-  res.json(member);
-});
-
-router.post('/', (req, res) => {
-  const { name, phone, email, gender, age, plan, fee, address, emergency } = req.body;
-  if (!name || !phone) {
-    return res.status(400).json({ error: 'Name and phone are required' });
-  }
-  const newMember = {
-    id: String(members.length + 1),
-    name,
-    phone,
-    email: email || '',
-    gender: gender || 'Male',
-    age: age || 25,
-    plan: plan || 'Monthly Basic',
-    planId: '4',
-    status: 'Active',
-    joinDate: new Date().toISOString().split('T')[0],
-    endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-    fee: fee || 999,
-    address: address || '',
-    emergency: emergency || '',
-    photo: '',
+function shapeMember(m) {
+  const sub = m.subscriptions?.[0];
+  const dob = m.date_of_birth;
+  const age = dob ? Math.floor((new Date() - new Date(dob)) / 31557600000) : null;
+  return {
+    id: m.id,
+    name: m.profile?.full_name || '',
+    phone: m.profile?.phone || '',
+    email: m.profile?.email || '',
+    gender: m.gender || '',
+    age,
+    plan: sub?.plan?.name || 'No Plan',
+    planId: sub?.plan?.id || '',
+    status: m.status,
+    joinDate: m.join_date,
+    endDate: sub?.end_date || '',
+    fee: Number(sub?.amount_paid) || 0,
+    address: m.address || '',
+    emergency: m.emergency_contact || '',
+    photo: m.profile?.avatar_url || '',
   };
-  members.push(newMember);
-  res.status(201).json(newMember);
+}
+
+router.get('/', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('members').select(MEMBER_SELECT).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data.map(shapeMember));
 });
 
-router.put('/:id', (req, res) => {
-  const idx = members.findIndex((m) => m.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Member not found' });
-  members[idx] = { ...members[idx], ...req.body, id: members[idx].id };
-  res.json(members[idx]);
+router.get('/:id', async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('members').select(MEMBER_SELECT).eq('id', req.params.id).single();
+  if (error) return res.status(404).json({ error: 'Member not found' });
+  res.json(shapeMember(data));
 });
 
-router.delete('/:id', (req, res) => {
-  const idx = members.findIndex((m) => m.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Member not found' });
-  const removed = members.splice(idx, 1)[0];
-  res.json({ message: 'Member deleted', member: removed });
+router.post('/', async (req, res) => {
+  const { name, phone, email, gender, age, plan, fee, address, emergency } = req.body;
+  if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required' });
+  const { data: profile, error: pe } = await supabaseAdmin.from('profiles').insert({ full_name: name, email: email || '', phone }).select().single();
+  if (pe) return res.status(500).json({ error: pe.message });
+  const code = `MEM-${Date.now().toString(36).toUpperCase()}`;
+  const { data: member, error: me } = await supabaseAdmin.from('members').insert({
+    profile_id: profile.id, member_code: code, gender: gender || 'Male',
+    status: 'active', join_date: new Date().toISOString().split('T')[0], address: address || '',
+    emergency_contact: emergency || '',
+  }).select().single();
+  if (me) return res.status(500).json({ error: me.message });
+  if (plan) {
+    const { data: planData } = await supabaseAdmin.from('membership_plans').select('id, duration_days').ilike('name', `%${plan}%`).limit(1).maybeSingle();
+    if (planData) {
+      await supabaseAdmin.from('member_subscriptions').insert({
+        member_id: member.id, plan_id: planData.id, amount_paid: fee || 0,
+        start_date: new Date().toISOString().split('T')[0],
+        end_date: new Date(Date.now() + (planData.duration_days || 30) * 86400000).toISOString().split('T')[0],
+        payment_status: fee ? 'completed' : 'pending',
+      });
+    }
+  }
+  const { data: full } = await supabaseAdmin.from('members').select(MEMBER_SELECT).eq('id', member.id).single();
+  res.status(201).json(shapeMember(full));
+});
+
+router.put('/:id', async (req, res) => {
+  const { name, phone, email, gender, address, emergency, status, age, ...rest } = req.body;
+  const { data: member } = await supabaseAdmin.from('members').select('profile_id').eq('id', req.params.id).single();
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+  if (name || email || phone) {
+    const updates = {};
+    if (name) updates.full_name = name;
+    if (email) updates.email = email;
+    if (phone) updates.phone = phone;
+    await supabaseAdmin.from('profiles').update(updates).eq('id', member.profile_id);
+  }
+  const memberUpdates = {};
+  if (gender !== undefined) memberUpdates.gender = gender;
+  if (address !== undefined) memberUpdates.address = address;
+  if (emergency !== undefined) memberUpdates.emergency_contact = emergency;
+  if (status !== undefined) memberUpdates.status = status;
+  if (Object.keys(memberUpdates).length > 0) {
+    await supabaseAdmin.from('members').update(memberUpdates).eq('id', req.params.id);
+  }
+  const { data: full } = await supabaseAdmin.from('members').select(MEMBER_SELECT).eq('id', req.params.id).single();
+  res.json(shapeMember(full));
+});
+
+router.delete('/:id', async (req, res) => {
+  const { data: member } = await supabaseAdmin.from('members').select('profile_id').eq('id', req.params.id).single();
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+  await supabaseAdmin.from('member_subscriptions').delete().eq('member_id', req.params.id);
+  await supabaseAdmin.from('members').delete().eq('id', req.params.id);
+  await supabaseAdmin.from('profiles').delete().eq('id', member.profile_id);
+  res.json({ message: 'Member deleted' });
 });
 
 export default router;

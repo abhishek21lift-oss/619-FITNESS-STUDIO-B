@@ -1,61 +1,65 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../db.js';
 
 const router = Router();
 
-const attendanceLog = [
-  { id: '1', memberId: '1', memberName: 'Arjun Singh', checkIn: '2026-01-15T06:30:00', date: '2026-01-15', status: 'Present' },
-  { id: '2', memberId: '2', memberName: 'Priya Sharma', checkIn: '2026-01-15T07:00:00', date: '2026-01-15', status: 'Present' },
-  { id: '3', memberId: '3', memberName: 'Rahul Verma', checkIn: '2026-01-15T08:15:00', date: '2026-01-15', status: 'Present' },
-  { id: '4', memberId: '5', memberName: 'Vikram Yadav', checkIn: '2026-01-15T06:45:00', date: '2026-01-15', status: 'Present' },
-  { id: '5', memberId: '7', memberName: 'Amit Gupta', checkIn: '2026-01-15T07:30:00', date: '2026-01-15', status: 'Present' },
-  { id: '6', memberId: '11', memberName: 'Rohit Pandey', checkIn: '2026-01-15T09:00:00', date: '2026-01-15', status: 'Present' },
-  { id: '7', memberId: '6', memberName: 'Sneha Patel', checkIn: '2026-01-15T10:15:00', date: '2026-01-15', status: 'Present' },
-  { id: '8', memberId: '4', memberName: 'Neha Kapoor', checkIn: '', date: '2026-01-15', status: 'Absent' },
-  { id: '9', memberId: '8', memberName: 'Kavita Joshi', checkIn: '', date: '2026-01-15', status: 'Absent' },
-  { id: '10', memberId: '12', memberName: 'Pooja Chauhan', checkIn: '2026-01-15T16:00:00', date: '2026-01-15', status: 'Present' },
-  { id: '11', memberId: '1', memberName: 'Arjun Singh', checkIn: '2026-01-14T06:35:00', date: '2026-01-14', status: 'Present' },
-  { id: '12', memberId: '2', memberName: 'Priya Sharma', checkIn: '2026-01-14T07:05:00', date: '2026-01-14', status: 'Present' },
-  { id: '13', memberId: '3', memberName: 'Rahul Verma', checkIn: '2026-01-14T08:20:00', date: '2026-01-14', status: 'Present' },
-  { id: '14', memberId: '5', memberName: 'Vikram Yadav', checkIn: '', date: '2026-01-14', status: 'Absent' },
-  { id: '15', memberId: '7', memberName: 'Amit Gupta', checkIn: '2026-01-14T07:25:00', date: '2026-01-14', status: 'Present' },
-];
-
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { date, memberId } = req.query;
-  let result = [...attendanceLog];
-  if (date) result = result.filter(a => a.date === date);
-  if (memberId) result = result.filter(a => a.memberId === memberId);
-  res.json(result);
+  let query = supabaseAdmin.from('attendance').select(`
+    id, check_in, check_out, method, created_at,
+    member:member_id ( id, member_code, profile:profile_id ( full_name ) )
+  `);
+  if (date) query = query.eq('check_in::date', date);
+  if (memberId) query = query.eq('member_id', memberId);
+  query = query.order('check_in', { ascending: false }).limit(50);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  const records = data.map(a => ({
+    id: a.id, memberId: a.member?.id || '', memberName: a.member?.profile?.full_name || '',
+    checkIn: a.check_in || '', date: a.check_in?.split('T')[0] || '',
+    status: a.check_in ? 'Present' : 'Absent',
+  }));
+  res.json(records);
 });
 
-router.get('/today', (_req, res) => {
+router.get('/today', async (_req, res) => {
   const today = new Date().toISOString().split('T')[0];
-  const todayLog = attendanceLog.filter(a => a.date === today);
-  const present = todayLog.filter(a => a.status === 'Present').length;
-  const absent = todayLog.filter(a => a.status === 'Absent').length;
-  const total = todayLog.length;
-  res.json({ date: today, total, present, absent, records: todayLog.length > 0 ? todayLog : attendanceLog.filter(a => a.date === '2026-01-15') });
+  const { data, error } = await supabaseAdmin.rpc('get_attendance_today');
+  if (error || !data) {
+    const { data: fallback } = await supabaseAdmin.from('attendance')
+      .select(`id, check_in, check_out, method, member:member_id ( id, member_code, profile:profile_id ( full_name ) )`)
+      .gte('check_in', today)
+      .order('check_in', { ascending: false });
+    const records = (fallback || []).map(a => ({
+      id: a.id, memberId: a.member?.id || '', memberName: a.member?.profile?.full_name || '',
+      checkIn: a.check_in || '', checkOut: a.check_out || '', method: a.method || '',
+    }));
+    return res.json({ date: today, total: records.length, present: records.length, absent: 0, records });
+  }
+  const records = data.map(a => ({
+    id: a.id, memberId: a.member_id, memberName: a.member_name,
+    checkIn: a.check_in, checkOut: a.check_out, method: a.method,
+  }));
+  res.json({ date: today, total: records.length, present: records.length, absent: 0, records });
 });
 
-router.post('/', (req, res) => {
-  const { memberId, memberName } = req.body;
+router.post('/', async (req, res) => {
+  const { memberId } = req.body;
   if (!memberId) return res.status(400).json({ error: 'Member ID required' });
   const today = new Date().toISOString().split('T')[0];
-  const existing = attendanceLog.find(a => a.memberId === memberId && a.date === today);
-  if (existing) {
-    return res.status(409).json({ error: 'Already checked in today', record: existing });
+  const { data: existing } = await supabaseAdmin.from('attendance')
+    .select('id').gte('check_in', today).eq('member_id', memberId).limit(1);
+  if (existing && existing.length > 0) {
+    return res.status(409).json({ error: 'Already checked in today' });
   }
-  const now = new Date().toISOString();
-  const newRecord = {
-    id: String(attendanceLog.length + 1),
-    memberId,
-    memberName: memberName || 'Unknown',
-    checkIn: now,
-    date: today,
-    status: 'Present',
-  };
-  attendanceLog.push(newRecord);
-  res.status(201).json(newRecord);
+  const { data, error } = await supabaseAdmin.from('attendance').insert({
+    member_id: memberId, method: 'qr',
+  }).select(`id, check_in, member:member_id ( id, profile:profile_id ( full_name ) )`).single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json({
+    id: data.id, memberId: data.member?.id || '', memberName: data.member?.profile?.full_name || '',
+    checkIn: data.check_in, date: data.check_in?.split('T')[0] || '', status: 'Present',
+  });
 });
 
 export default router;

@@ -1,52 +1,70 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../db.js';
 
 const router = Router();
 
-const classes = [
-  { id: '1', name: 'Morning Yoga', trainer: 'Suman Yadav', time: '06:00 AM', duration: 60, days: ['Mon', 'Wed', 'Fri'], capacity: 20, enrolled: 15, category: 'Yoga', description: 'Start your day with refreshing yoga' },
-  { id: '2', name: 'HIIT Blast', trainer: 'Mohit Singh', time: '07:00 AM', duration: 45, days: ['Mon', 'Tue', 'Thu', 'Sat'], capacity: 25, enrolled: 22, category: 'Cardio', description: 'High intensity interval training' },
-  { id: '3', name: 'Power Lifting', trainer: 'Vivek Patel', time: '08:00 AM', duration: 60, days: ['Mon', 'Wed', 'Fri'], capacity: 15, enrolled: 12, category: 'Strength', description: 'Advanced powerlifting techniques' },
-  { id: '4', name: 'Zumba Dance', trainer: 'Suman Yadav', time: '07:00 PM', duration: 45, days: ['Tue', 'Thu', 'Sat'], capacity: 30, enrolled: 28, category: 'Dance', description: 'Fun cardio dance workout' },
-  { id: '5', name: 'Boxing Fitness', trainer: 'Mohit Singh', time: '06:00 PM', duration: 60, days: ['Mon', 'Wed', 'Fri'], capacity: 20, enrolled: 18, category: 'Boxing', description: 'Boxing and conditioning' },
-  { id: '6', name: 'Pilates Core', trainer: 'Vivek Patel', time: '09:00 AM', duration: 50, days: ['Tue', 'Thu', 'Sat'], capacity: 18, enrolled: 14, category: 'Pilates', description: 'Core strength and flexibility' },
-  { id: '7', name: 'Evening Meditation', trainer: 'Suman Yadav', time: '08:00 PM', duration: 30, days: ['Mon', 'Wed', 'Fri', 'Sun'], capacity: 25, enrolled: 20, category: 'Wellness', description: 'Guided meditation and breathing' },
-];
+const CLASS_SELECT = `
+  id, name, description, category, capacity, duration_minutes, start_time, end_time, days_of_week, color, created_at,
+  trainer:trainer_id ( id, profile:profile_id ( full_name ) )
+`;
 
-router.get('/', (_req, res) => {
+function shapeClass(c) {
+  return {
+    id: c.id,
+    name: c.name,
+    trainer: c.trainer?.profile?.full_name || 'Unassigned',
+    time: c.start_time ? c.start_time.slice(0, 5) + ' AM' : '08:00 AM',
+    duration: c.duration_minutes || 60,
+    days: c.days_of_week || [],
+    capacity: c.capacity || 20,
+    enrolled: 0,
+    category: c.category || 'General',
+    description: c.description || '',
+  };
+}
+
+router.get('/', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('classes').select(CLASS_SELECT).order('start_time');
+  if (error) return res.status(500).json({ error: error.message });
+  const classes = data.map(shapeClass);
+  for (const c of classes) {
+    const { count } = await supabaseAdmin.from('class_bookings').select('*', { count: 'exact', head: true }).eq('class_id', c.id);
+    c.enrolled = count || 0;
+  }
   res.json(classes);
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { name, trainer, time, duration, days, capacity, category, description } = req.body;
   if (!name || !trainer) return res.status(400).json({ error: 'Name and trainer required' });
-  const newClass = {
-    id: String(classes.length + 1),
-    name,
-    trainer,
-    time: time || '08:00 AM',
-    duration: duration || 60,
-    days: days || ['Mon'],
-    capacity: capacity || 20,
-    enrolled: 0,
-    category: category || 'General',
-    description: description || '',
-  };
-  classes.push(newClass);
-  res.status(201).json(newClass);
+  const { data, error } = await supabaseAdmin.from('classes').insert({
+    name, description: description || '', category: category || 'General',
+    capacity: capacity || 20, duration_minutes: duration || 60,
+    start_time: time || '08:00', end_time: '09:00', days_of_week: days || [],
+  }).select(CLASS_SELECT).single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json(shapeClass(data));
 });
 
-router.put('/:id', (req, res) => {
-  const idx = classes.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Class not found' });
-  classes[idx] = { ...classes[idx], ...req.body, id: classes[idx].id };
-  res.json(classes[idx]);
+router.put('/:id', async (req, res) => {
+  const { name, trainer, time, duration, days, capacity, category, description } = req.body;
+  const updates = {};
+  if (name) updates.name = name;
+  if (category) updates.category = category;
+  if (capacity) updates.capacity = capacity;
+  if (duration) updates.duration_minutes = duration;
+  if (time) updates.start_time = time;
+  if (days) updates.days_of_week = days;
+  if (description !== undefined) updates.description = description;
+  const { data, error } = await supabaseAdmin.from('classes').update(updates).eq('id', req.params.id).select(CLASS_SELECT).single();
+  if (error) return res.status(404).json({ error: 'Class not found' });
+  res.json(shapeClass(data));
 });
 
-router.delete('/:id', (req, res) => {
-  const idx = classes.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Class not found' });
-  const removed = classes.splice(idx, 1)[0];
-  res.json({ message: 'Class deleted', class: removed });
+router.delete('/:id', async (req, res) => {
+  const { error } = await supabaseAdmin.from('classes').delete().eq('id', req.params.id);
+  if (error) return res.status(404).json({ error: 'Class not found' });
+  res.json({ message: 'Class deleted' });
 });
 
 export default router;

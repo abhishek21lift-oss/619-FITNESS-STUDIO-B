@@ -1,64 +1,83 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../db.js';
 
 const router = Router();
 
-const transactions = [
-  { id: '1', memberId: '1', memberName: 'Arjun Singh', plan: 'Monthly Premium', amount: 1999, status: 'Paid', date: '2026-01-01', method: 'UPI', invoice: 'INV-2026-001' },
-  { id: '2', memberId: '2', memberName: 'Priya Sharma', plan: 'Quarterly Pro', amount: 4999, status: 'Paid', date: '2026-01-05', method: 'Cash', invoice: 'INV-2026-002' },
-  { id: '3', memberId: '3', memberName: 'Rahul Verma', plan: 'Yearly Elite', amount: 14999, status: 'Paid', date: '2025-12-01', method: 'Card', invoice: 'INV-2025-003' },
-  { id: '4', memberId: '5', memberName: 'Vikram Yadav', plan: 'Quarterly Pro', amount: 4999, status: 'Pending', date: '2026-01-10', method: '', invoice: '' },
-  { id: '5', memberId: '6', memberName: 'Sneha Patel', plan: 'Monthly Basic', amount: 999, status: 'Paid', date: '2026-01-05', method: 'UPI', invoice: 'INV-2026-004' },
-  { id: '6', memberId: '7', memberName: 'Amit Gupta', plan: 'Yearly Elite', amount: 14999, status: 'Paid', date: '2025-11-15', method: 'Bank Transfer', invoice: 'INV-2025-005' },
-  { id: '7', memberId: '9', memberName: 'Deepak Mishra', plan: 'Quarterly Pro', amount: 4999, status: 'Overdue', date: '2025-12-05', method: '', invoice: '' },
-  { id: '8', memberId: '11', memberName: 'Rohit Pandey', plan: 'Yearly Elite', amount: 14999, status: 'Paid', date: '2025-10-20', method: 'UPI', invoice: 'INV-2025-006' },
-  { id: '9', memberId: '8', memberName: 'Kavita Joshi', plan: 'Monthly Premium', amount: 1999, status: 'Pending', date: '2026-01-20', method: '', invoice: '' },
-  { id: '10', memberId: '12', memberName: 'Pooja Chauhan', plan: 'Monthly Basic', amount: 999, status: 'Paid', date: '2026-02-01', method: 'Cash', invoice: 'INV-2026-007' },
-];
+const TX_SELECT = `
+  id, amount, payment_date, payment_method, transaction_id, status, invoice_no, created_at,
+  member:member_id ( id, member_code, profile_id ),
+  subscription:subscription_id ( id, plan_id, amount_paid, payment_status,
+    plan:plan_id ( name )
+  )
+`;
 
-const plans = [
-  { id: '1', name: 'Monthly Premium', price: 1999 },
-  { id: '2', name: 'Quarterly Pro', price: 4999 },
-  { id: '3', name: 'Yearly Elite', price: 14999 },
-  { id: '4', name: 'Monthly Basic', price: 999 },
-];
-
-router.get('/', (_req, res) => {
-  res.json(transactions);
-});
-
-router.get('/stats', (_req, res) => {
-  const totalRevenue = transactions.filter(t => t.status === 'Paid').reduce((s, t) => s + t.amount, 0);
-  const pendingAmount = transactions.filter(t => t.status === 'Pending' || t.status === 'Overdue').reduce((s, t) => s + t.amount, 0);
-  const thisMonth = transactions.filter(t => t.date.startsWith('2026-01') && t.status === 'Paid').reduce((s, t) => s + t.amount, 0);
-  const overdueAmount = transactions.filter(t => t.status === 'Overdue').reduce((s, t) => s + t.amount, 0);
-  res.json({ totalRevenue, pendingAmount, collectedThisMonth: thisMonth, overdueAmount, totalTransactions: transactions.length });
-});
-
-router.post('/', (req, res) => {
-  const { memberId, memberName, plan, amount, method } = req.body;
-  if (!memberId || !amount) {
-    return res.status(400).json({ error: 'Member and amount required' });
-  }
-  const newTx = {
-    id: String(transactions.length + 1),
-    memberId,
-    memberName: memberName || 'Unknown',
-    plan: plan || 'Custom',
-    amount,
-    status: 'Paid',
-    date: new Date().toISOString().split('T')[0],
-    method: method || 'Cash',
-    invoice: `INV-2026-${String(transactions.length + 1).padStart(3, '0')}`,
+function shapeTx(t) {
+  return {
+    id: t.id,
+    memberId: t.member?.id || '',
+    memberName: '', // populated below
+    plan: t.subscription?.plan?.name || 'Custom',
+    amount: Number(t.amount),
+    status: t.status === 'completed' ? 'Paid' : t.status === 'pending' ? 'Pending' : 'Overdue',
+    date: t.payment_date?.split('T')[0] || '',
+    method: t.payment_method || '',
+    invoice: t.invoice_no || '',
   };
-  transactions.push(newTx);
-  res.status(201).json(newTx);
+}
+
+router.get('/', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('payments').select(TX_SELECT).order('payment_date', { ascending: false }).limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  const enriched = await Promise.all(data.map(async (t) => {
+    const tx = shapeTx(t);
+    if (t.member?.profile_id) {
+      const { data: p } = await supabaseAdmin.from('profiles').select('full_name').eq('id', t.member.profile_id).single();
+      if (p) tx.memberName = p.full_name;
+    }
+    return tx;
+  }));
+  res.json(enriched);
 });
 
-router.put('/:id', (req, res) => {
-  const idx = transactions.findIndex(t => t.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Transaction not found' });
-  transactions[idx] = { ...transactions[idx], ...req.body, id: transactions[idx].id };
-  res.json(transactions[idx]);
+router.get('/stats', async (_req, res) => {
+  const { data: allPayments } = await supabaseAdmin.from('payments').select('amount, status, payment_date');
+  if (!allPayments) return res.json({ totalRevenue: 0, pendingAmount: 0, collectedThisMonth: 0, overdueAmount: 0, totalTransactions: 0 });
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+  let totalRevenue = 0, pendingAmount = 0, collectedThisMonth = 0, overdueAmount = 0;
+  for (const p of allPayments) {
+    const amt = Number(p.amount);
+    if (p.status === 'completed') {
+      totalRevenue += amt;
+      if (p.payment_date >= monthStart) collectedThisMonth += amt;
+    } else if (p.status === 'pending') {
+      pendingAmount += amt;
+    } else if (p.status === 'overdue') {
+      overdueAmount += amt;
+    }
+  }
+  res.json({ totalRevenue, pendingAmount, collectedThisMonth, overdueAmount, totalTransactions: allPayments.length });
+});
+
+router.post('/', async (req, res) => {
+  const { memberId, memberName, plan, amount, method } = req.body;
+  if (!memberId || !amount) return res.status(400).json({ error: 'Member and amount required' });
+  const { data, error } = await supabaseAdmin.from('payments').insert({
+    member_id: memberId, amount, payment_method: method || 'Cash',
+    status: 'completed', invoice_no: `INV-${Date.now().toString(36).toUpperCase()}`,
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json({
+    id: data.id, memberId, memberName: memberName || '', plan: plan || 'Custom',
+    amount: Number(data.amount), status: 'Paid', date: data.payment_date?.split('T')[0] || '',
+    method: data.payment_method || '', invoice: data.invoice_no || '',
+  });
+});
+
+router.put('/:id', async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('payments').update(req.body).eq('id', req.params.id).select().single();
+  if (error) return res.status(404).json({ error: 'Transaction not found' });
+  res.json(data);
 });
 
 export default router;

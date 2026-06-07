@@ -1,48 +1,52 @@
 import { Router } from 'express';
+import { supabaseAdmin } from '../db.js';
 
 const router = Router();
 
-const plans = [
-  { id: '1', name: 'Monthly Basic', price: 999, duration: '1 Month', durationDays: 30, description: 'Access to gym equipment during standard hours', features: ['Gym equipment access', 'Standard hours', 'Locker facility'], popular: false },
-  { id: '2', name: 'Monthly Premium', price: 1999, duration: '1 Month', durationDays: 30, description: 'Full access including classes and steam', features: ['Everything in Basic', 'Group classes', 'Steam room', 'Personal trainer (2 sessions)'], popular: true },
-  { id: '3', name: 'Quarterly Pro', price: 4999, duration: '3 Months', durationDays: 90, description: 'Best value quarterly plan with all access', features: ['Everything in Premium', '12 PT sessions', 'Diet consultation', 'Priority booking'], popular: false },
-  { id: '4', name: 'Yearly Elite', price: 14999, duration: '12 Months', durationDays: 365, description: 'Ultimate membership with maximum savings', features: ['Everything in Pro', 'Unlimited PT', 'Free merchandise', 'Guest passes (4/month)', 'Nutrition plan'], popular: false },
-  { id: '5', name: 'Corporate Plan', price: 7999, duration: '3 Months', durationDays: 90, description: 'Special pricing for corporate groups of 5+', features: ['All Pro features', 'Group discount', 'Corporate events', 'Flexible timing'], popular: false },
-];
+function shapePlan(p) {
+  const duration = p.duration_days === 30 ? '1 Month' : p.duration_days === 90 ? '3 Months' : p.duration_days === 365 ? '12 Months' : `${p.duration_days} Days`;
+  return {
+    id: p.id, name: p.name, price: Number(p.price), duration,
+    durationDays: p.duration_days || 30,
+    description: p.description || '',
+    features: p.features || [],
+    popular: p.name?.toLowerCase().includes('premium') || false,
+  };
+}
 
-router.get('/', (_req, res) => {
-  res.json(plans);
+router.get('/', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('membership_plans').select('*').order('price');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json((data || []).map(shapePlan));
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { name, price, duration, durationDays, description, features } = req.body;
   if (!name || !price) return res.status(400).json({ error: 'Name and price required' });
-  const newPlan = {
-    id: String(plans.length + 1),
-    name,
-    price: Number(price),
-    duration: duration || '1 Month',
-    durationDays: durationDays || 30,
-    description: description || '',
-    features: features || [],
-    popular: false,
-  };
-  plans.push(newPlan);
-  res.status(201).json(newPlan);
+  const { data, error } = await supabaseAdmin.from('membership_plans').insert({
+    name, price: Number(price), duration_days: durationDays || 30,
+    description: description || '', features: features || [],
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json(shapePlan(data));
 });
 
-router.put('/:id', (req, res) => {
-  const idx = plans.findIndex(p => p.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Plan not found' });
-  plans[idx] = { ...plans[idx], ...req.body, id: plans[idx].id };
-  res.json(plans[idx]);
+router.put('/:id', async (req, res) => {
+  const updates = {};
+  if (req.body.name !== undefined) updates.name = req.body.name;
+  if (req.body.price !== undefined) updates.price = Number(req.body.price);
+  if (req.body.durationDays !== undefined) updates.duration_days = req.body.durationDays;
+  if (req.body.description !== undefined) updates.description = req.body.description;
+  if (req.body.features !== undefined) updates.features = req.body.features;
+  const { data, error } = await supabaseAdmin.from('membership_plans').update(updates).eq('id', req.params.id).select().single();
+  if (error) return res.status(404).json({ error: 'Plan not found' });
+  res.json(shapePlan(data));
 });
 
-router.delete('/:id', (req, res) => {
-  const idx = plans.findIndex(p => p.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Plan not found' });
-  const removed = plans.splice(idx, 1)[0];
-  res.json({ message: 'Plan deleted', plan: removed });
+router.delete('/:id', async (req, res) => {
+  const { error } = await supabaseAdmin.from('membership_plans').delete().eq('id', req.params.id);
+  if (error) return res.status(404).json({ error: 'Plan not found' });
+  res.json({ message: 'Plan deleted' });
 });
 
 export default router;

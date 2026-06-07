@@ -33,7 +33,7 @@ const limiter = rateLimit({
 });
 
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: [process.env.CLIENT_URL, 'https://yourdigitallift.vercel.app', 'http://localhost:5173'].filter(Boolean), credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(limiter);
 

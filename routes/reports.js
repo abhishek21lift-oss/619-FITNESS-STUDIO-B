@@ -4,7 +4,8 @@ import { supabaseAdmin } from '../db.js';
 const router = Router();
 
 router.get('/overview', async (_req, res) => {
-  const { data: stats, error } = await supabaseAdmin.rpc('get_dashboard_stats');
+  const { data: statsRaw, error } = await supabaseAdmin.rpc('get_dashboard_stats');
+  const stats = Array.isArray(statsRaw) ? statsRaw[0] : statsRaw;
   if (error || !stats) {
     const { count: totalMembers } = await supabaseAdmin.from('members').select('*', { count: 'exact', head: true });
     const { count: activeMembers } = await supabaseAdmin.from('members').select('*', { count: 'exact', head: true }).eq('status', 'active');

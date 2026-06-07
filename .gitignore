@@ -1,6 +1,9 @@
 node_modules/
 .env
 *.local
-
 run-schema.js
 seed.js
+page-*.html
+dashboard.html
+scrape-pages.mjs
+login-test.mjs

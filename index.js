@@ -18,6 +18,11 @@ import classRoutes from './routes/classes.js';
 import leadRoutes from './routes/leads.js';
 import planRoutes from './routes/plans.js';
 import settingRoutes from './routes/settings.js';
+import followupRoutes from './routes/followups.js';
+import announcementRoutes from './routes/announcements.js';
+import batchRoutes from './routes/batches.js';
+import storeRoutes from './routes/store.js';
+import checkinRoutes from './routes/checkin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +52,11 @@ app.use('/api/classes', classRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/settings', settingRoutes);
+app.use('/api/followups', followupRoutes);
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/batches', batchRoutes);
+app.use('/api/store', storeRoutes);
+app.use('/api/checkin', checkinRoutes);
 
 const clientDist = path.resolve(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
@@ -59,8 +69,11 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
+import { runMigrations } from './migrate.js';
+
+app.listen(PORT, async () => {
   console.log(`YDL Server running on port ${PORT}`);
+  await runMigrations();
 });
 
 export default app;

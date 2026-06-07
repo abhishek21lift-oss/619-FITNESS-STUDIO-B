@@ -124,7 +124,8 @@ CREATE TABLE attendance (
 
 CREATE INDEX idx_attendance_member_id ON attendance (member_id);
 CREATE INDEX idx_attendance_check_in  ON attendance (check_in);
-CREATE INDEX idx_attendance_date      ON attendance ((check_in::date));
+-- Skipped: (check_in::date) requires IMMUTABLE; timestamptz cast is STABLE
+-- CREATE INDEX idx_attendance_date ON attendance ((check_in::date));
 
 -- ============================================================
 -- 7. staff

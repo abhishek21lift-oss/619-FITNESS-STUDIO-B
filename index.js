@@ -15,6 +15,7 @@ const PORT = process.env.PORT || 10000
 
 // Health check (before rate limiter — Render's health checker must not be blocked)
 app.get('/', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }))
+app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -743,19 +744,19 @@ app.use((err, _req, res, _next) => {
 })
 
 // ──────────────────────────────────────────────
-// START
+// START (listen first, then migrate in background)
 // ──────────────────────────────────────────────
-async function start() {
-  try {
-    await runMigrations()
-  } catch (e) {
-    console.log('Migration note:', e.message)
-  }
-  app.listen(PORT, () => {
-    console.log(`YDL Backend running on port ${PORT}`)
-  })
-}
+const server = app.listen(PORT, () => {
+  console.log(`YDL Backend running on port ${PORT}`)
+})
 
-start()
+runMigrationsWithTimeout()
+  .then(() => console.log('Migrations completed'))
+  .catch(e => console.log('Migration note:', e.message))
+
+async function runMigrationsWithTimeout() {
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Migration timed out')), 30000))
+  await Promise.race([runMigrations(), timeout])
+}
 
 export default app

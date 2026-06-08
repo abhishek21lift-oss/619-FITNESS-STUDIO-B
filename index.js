@@ -4,16 +4,11 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
-import path from 'path'
-import { fileURLToPath } from 'url'
 import { supabase } from './supabase.js'
 import { authenticate } from './middleware/auth.js'
 import { runMigrations } from './migrate.js'
 
 dotenv.config()
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -739,14 +734,8 @@ app.get('/api/dashboard', authenticate, async (req, res) => {
 })
 
 // ──────────────────────────────────────────────
-// STATIC FILES & ERROR HANDLING
+// ERROR HANDLING
 // ──────────────────────────────────────────────
-const clientDist = path.resolve(__dirname, '..', 'client', 'dist')
-app.use(express.static(clientDist))
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(clientDist, 'index.html'))
-})
-
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err)
   res.status(500).json({ error: 'Internal server error' })
@@ -755,13 +744,17 @@ app.use((err, _req, res, _next) => {
 // ──────────────────────────────────────────────
 // START
 // ──────────────────────────────────────────────
-app.listen(PORT, async () => {
-  console.log(`YDL Backend running on port ${PORT}`)
+async function start() {
   try {
     await runMigrations()
   } catch (e) {
     console.log('Migration note:', e.message)
   }
-})
+  app.listen(PORT, () => {
+    console.log(`YDL Backend running on port ${PORT}`)
+  })
+}
+
+start()
 
 export default app

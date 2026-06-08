@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "seed": "node seed.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -14,6 +15,7 @@
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.3",
     "pg": "^8.21.0"
   }
 }

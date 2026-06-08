@@ -13,20 +13,21 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 10000
 
+// Health check (before rate limiter — Render's health checker must not be blocked)
+app.get('/', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }))
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path === '/',
 })
 
 app.use(helmet({ contentSecurityPolicy: false }))
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json({ limit: '10mb' }))
 app.use(limiter)
-
-// Health check
-app.get('/', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
 // ──────────────────────────────────────────────
 // AUTH ROUTES

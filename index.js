@@ -35,12 +35,13 @@ app.use(limiter)
 // ──────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
+    const { username, email: emailField, password } = req.body
+    const identifier = username || emailField
+    if (!identifier || !password) return res.status(400).json({ error: 'Username and password required' })
 
     let query = supabase.from('profiles').select('*')
-    if (username.includes('@')) query = query.eq('email', username)
-    else query = query.or(`phone.eq.${username},email.eq.${username}`)
+    if (identifier.includes('@')) query = query.eq('email', identifier)
+    else query = query.or(`phone.eq.${identifier},email.eq.${identifier}`)
 
     const { data: users, error: fetchError } = await query
     if (fetchError || !users || users.length === 0) return res.status(401).json({ error: 'Invalid credentials' })

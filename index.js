@@ -47,7 +47,6 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = users[0]
 
-    // Check credentials: profiles.password first, then _credentials table fallback
     let valid = false
     if (user.password && user.password === password) {
       valid = true
@@ -450,6 +449,90 @@ app.get('/api/analysis/lead-source', authenticate, async (req, res) => {
 })
 
 // ──────────────────────────────────────────────
+// ANALYSIS — EXTENDED ROUTES
+// ──────────────────────────────────────────────
+app.get('/api/analysis/enquiry-followup-stage', authenticate, async (req, res) => {
+  try {
+    const { data: enquiries } = await supabase.from('enquiries').select('*').eq('deleted', false)
+    const { data: followups } = await supabase.from('followups').select('*, enquiries(name,phone)')
+    const stageData = {}
+    enquiries.forEach(e => {
+      const stage = e.status || 'new'
+      stageData[stage] = (stageData[stage] || 0) + 1
+    })
+    res.json({ stages: stageData, total: enquiries.length, followups: followups || [] })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.get('/api/analysis/enquiry-conversion', authenticate, async (req, res) => {
+  try {
+    const { data: enquiries } = await supabase.from('enquiries').select('*').eq('deleted', false)
+    const { data: members } = await supabase.from('members').select('phone')
+    const memberPhones = new Set(members.map(m => m.phone))
+    const converted = enquiries.filter(e => memberPhones.has(e.phone))
+    const monthly = {}
+    enquiries.forEach(e => {
+      const key = e.created_at ? e.created_at.substring(0, 7) : 'unknown'
+      if (!monthly[key]) monthly[key] = { enquiries: 0, converted: 0 }
+      monthly[key].enquiries++
+      if (memberPhones.has(e.phone)) monthly[key].converted++
+    })
+    res.json({ total: enquiries.length, converted: converted.length, rate: enquiries.length ? ((converted.length / enquiries.length) * 100).toFixed(1) : 0, monthly })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.get('/api/analysis/daily-collection', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('accounts_entries').select('*').order('date', { ascending: false })
+    if (error) return res.status(500).json({ error: error.message })
+    const daily = {}
+    data.forEach(e => {
+      const key = e.date || 'unknown'
+      daily[key] = (daily[key] || 0) + Number(e.amount)
+    })
+    res.json({ daily, total: data.reduce((s, e) => s + Number(e.amount), 0), records: data })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.get('/api/analysis/session', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('attendance').select('*')
+    if (error) return res.status(500).json({ error: error.message })
+    const byDate = {}
+    data.forEach(a => {
+      const key = a.date ? a.date.substring(0, 10) : 'unknown'
+      byDate[key] = (byDate[key] || 0) + 1
+    })
+    res.json({ total: data.length, byDate, records: data })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.get('/api/analysis/leaderboard', authenticate, async (req, res) => {
+  try {
+    const { data: members } = await supabase.from('members').select('*')
+    const { data: enquiries } = await supabase.from('enquiries').select('*').eq('deleted', false)
+    const reps = {}
+    enquiries.forEach(e => {
+      const rep = e.rep || 'Unassigned'
+      if (!reps[rep]) reps[rep] = { enquiries: 0, conversions: 0 }
+      reps[rep].enquiries++
+      if (members.some(m => m.phone === e.phone)) reps[rep].conversions++
+    })
+    const sorted = Object.entries(reps).sort((a, b) => b[1].conversions - a[1].conversions)
+    res.json({ leaderboard: sorted.map(([name, data]) => ({ name, ...data })) })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.get('/api/analysis/weight-loss', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('members').select('*')
+    if (error) return res.status(500).json({ error: error.message })
+    const withWeight = data.filter(m => m.medical_notes && m.medical_notes.toLowerCase().includes('weight'))
+    res.json({ total: data.length, tracking: withWeight.length, members: withWeight })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+// ──────────────────────────────────────────────
 // MEMBERSHIP ROUTES
 // ──────────────────────────────────────────────
 const crud = (app, basePath, table) => {
@@ -527,6 +610,12 @@ app.get('/api/batches/calendar', authenticate, async (req, res) => {
 })
 
 // ──────────────────────────────────────────────
+// BATCH EXTRA ROUTES (waiting, daily-bookings)
+// ──────────────────────────────────────────────
+crud(app, '/api/batches/waiting', 'batch_waiting')
+crud(app, '/api/batches/daily-bookings', 'daily_bookings')
+
+// ──────────────────────────────────────────────
 // ACCOUNT ROUTES
 // ──────────────────────────────────────────────
 crud(app, '/api/accounts/entries', 'accounts_entries')
@@ -554,8 +643,52 @@ app.post('/api/accounts/payroll', authenticate, async (req, res) => {
 })
 
 // ──────────────────────────────────────────────
-// NOTIFICATION ROUTES
+// NOTIFICATION ROUTES (extended CRUD + send)
 // ──────────────────────────────────────────────
+app.get('/api/notifications', authenticate, async (req, res) => {
+  try {
+    let query = supabase.from('notifications').select('*').order('sent_at', { ascending: false })
+    const { type, limit } = req.query
+    if (type) query = query.eq('type', type)
+    if (limit) query = query.limit(parseInt(limit))
+    const { data, error } = await query
+    if (error) return res.status(500).json({ error: error.message })
+    res.json(data)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.post('/api/notifications', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('notifications').insert(req.body).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    res.status(201).json(data)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.put('/api/notifications/read-all', authenticate, async (req, res) => {
+  try {
+    const { error } = await supabase.from('notifications').update({ status: 'read' }).eq('status', 'sent')
+    if (error) return res.status(500).json({ error: error.message })
+    res.json({ message: 'All marked as read' })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.put('/api/notifications/:id/read', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('notifications').update({ status: 'read' }).eq('id', req.params.id).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    res.json(data)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.delete('/api/notifications/:id', authenticate, async (req, res) => {
+  try {
+    const { error } = await supabase.from('notifications').delete().eq('id', req.params.id)
+    if (error) return res.status(500).json({ error: error.message })
+    res.json({ message: 'Deleted' })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
 app.post('/api/notifications/send', authenticate, async (req, res) => {
   try {
     const notification = { ...req.body, status: 'sent', sent_at: new Date() }
@@ -606,10 +739,15 @@ app.post('/api/notifications/email', authenticate, async (req, res) => {
 // ──────────────────────────────────────────────
 // STAFF / TRAINER ROUTES
 // ──────────────────────────────────────────────
+// Staff sub-routes must be registered before crud(app, '/api/staff', 'staff')
+// to avoid catching 'attendance' as an :id
+crud(app, '/api/staff/attendance', 'staff_attendance')
 crud(app, '/api/staff', 'staff')
-crud(app, '/api/trainers', 'trainers')
 
-// Trainer leave routes (register before crud catches /:id)
+// Trainer sub-routes before crud(app, '/api/trainers', 'trainers')
+crud(app, '/api/trainers/commission', 'trainer_commission')
+
+// Trainer leave routes with joins
 app.get('/api/trainers/leave', authenticate, async (req, res) => {
   try {
     const { data, error } = await supabase.from('trainer_leave').select('*, trainers(name)').order('from_date', { ascending: false })
@@ -641,6 +779,8 @@ app.delete('/api/trainers/leave/:id', authenticate, async (req, res) => {
     res.json({ message: 'Deleted' })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
+
+crud(app, '/api/trainers', 'trainers')
 
 app.post('/api/trainers/:id/checkin', authenticate, async (req, res) => {
   try {
@@ -702,13 +842,112 @@ crud(app, '/api/settings/notices', 'notices')
 crud(app, '/api/settings/holidays', 'holidays')
 crud(app, '/api/settings/feedback', 'feedback')
 
+// Fitness center extended settings
+crud(app, '/api/settings/invoice', 'invoice_settings')
+crud(app, '/api/settings/biometric', 'biometric_settings')
+crud(app, '/api/settings/dlt-otp', 'dlt_otp_settings')
+crud(app, '/api/settings/email-manager', 'email_manager')
+crud(app, '/api/settings/rules', 'rules')
+crud(app, '/api/settings/currency', 'currency')
+
 // ──────────────────────────────────────────────
-// ANNOUNCEMENTS, STORE, CHECKIN — re-register via crud for YDL API client
-// (These tables may need to be created; if table names differ, adjust)
+// PROGRAMS ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/programs', 'programs')
+crud(app, '/api/programs/enrollments', 'program_enrollments')
+crud(app, '/api/programs/attendance', 'program_attendance')
+
+// ──────────────────────────────────────────────
+// GALLERY ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/gallery', 'gallery')
+
+// ──────────────────────────────────────────────
+// ACTION ITEMS ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/action-items', 'action_items')
+
+// ──────────────────────────────────────────────
+// QUICK ACTIONS ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/quick-actions', 'quick_actions')
+
+// ──────────────────────────────────────────────
+// BANNERS ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/banners', 'banners')
+
+// ──────────────────────────────────────────────
+// DIET & EXERCISE ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/diet-plans', 'diet_plans')
+crud(app, '/api/diet-foods', 'diet_foods')
+crud(app, '/api/diet-recipes', 'diet_recipes')
+crud(app, '/api/exercises', 'exercises')
+
+// ──────────────────────────────────────────────
+// CHALLENGES ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/challenges', 'challenges')
+crud(app, '/api/challenges/teams', 'challenge_teams')
+
+// ──────────────────────────────────────────────
+// WALLET ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/wallet/categories', 'wallet_categories')
+crud(app, '/api/wallet/activities', 'wallet_activities')
+crud(app, '/api/wallet/register', 'wallet_register')
+
+// ──────────────────────────────────────────────
+// ECOMMERCE / STORE ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/stores', 'stores')
+crud(app, '/api/store-items', 'store_items')
+crud(app, '/api/store-orders', 'store_orders')
+
+// ──────────────────────────────────────────────
+// VENDORS ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/vendors', 'vendors')
+
+// ──────────────────────────────────────────────
+// COURSE ORDERS ROUTES
+// ──────────────────────────────────────────────
+crud(app, '/api/course-orders', 'course_orders')
+
+// ──────────────────────────────────────────────
+// ANNOUNCEMENTS & CHECKIN
 // ──────────────────────────────────────────────
 crud(app, '/api/announcements', 'announcements')
-crud(app, '/api/store', 'store_items')
 crud(app, '/api/checkin', 'checkins')
+
+// ──────────────────────────────────────────────
+// SMS ROUTES
+// ──────────────────────────────────────────────
+app.get('/api/sms/balance', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('sms_balance').select('*').maybeSingle()
+    if (error) return res.status(500).json({ error: error.message })
+    res.json(data || { balance: 0, provider: 'default' })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.put('/api/sms/balance', authenticate, async (req, res) => {
+  try {
+    const { data: existing } = await supabase.from('sms_balance').select('id').maybeSingle()
+    if (existing) {
+      const { data, error } = await supabase.from('sms_balance').update(req.body).eq('id', existing.id).select().single()
+      if (error) return res.status(500).json({ error: error.message })
+      res.json(data)
+    } else {
+      const { data, error } = await supabase.from('sms_balance').insert(req.body).select().single()
+      if (error) return res.status(500).json({ error: error.message })
+      res.status(201).json(data)
+    }
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+crud(app, '/api/sms/recharge', 'sms_recharge')
 
 // ──────────────────────────────────────────────
 // DASHBOARD SUMMARY
